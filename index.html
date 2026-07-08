@@ -290,7 +290,7 @@ async function tryPlans(plans,i){
   const isTv=/\b(SMART[-_]?TV|Tizen|WebOS|NETCAST|Cobalt|SilkBrowser|AFT|HbbTV|PhilipsTV|VIDAA)\b/i.test(navigator.userAgent||'');
   $('netStatus').textContent='Loading '+p.label;$('miniMeta').textContent='Trying '+p.label;
   v.muted=false;v.playsInline=true;v.setAttribute('playsinline','');v.setAttribute('webkit-playsinline','');
-  v.preload=transcoded?'auto':'metadata';v.autoplay=true;
+  v.preload=transcoded?'auto':'metadata';v.autoplay=true;v.loop=false;
   let started=false,stallTimer=null,recoveryCount=0;
   const clearStall=()=>{if(stallTimer){clearTimeout(stallTimer);stallTimer=null}};
   const markPlaying=()=>{
@@ -304,7 +304,7 @@ async function tryPlans(plans,i){
   const failNext=()=>{if(token===S.seq&&!started)nextPlan()};
   const switchIfStuck=()=>{
     if(token!==S.seq)return;
-    if(live&&!transcoded&&S.hls&&recoveryCount<3){
+    if(live&&!transcoded&&S.hls&&recoveryCount<4){
       recoveryCount++;
       try{S.hls.recoverMediaError();return}catch{}
     }
@@ -366,31 +366,31 @@ async function tryPlans(plans,i){
       v.src=p.url;v.load();startVideo(token);
     }else if(p.kind==='hls'){
       if(window.Hls&&Hls.isSupported()){
-        /* ExoPlayer-grade HLS config: adaptive bitrate, TV-aware buffer, live tuning */
+        /* ExoPlayer-grade HLS config: anti-loop and anti-lag */
         const hlsCfg={
           enableWorker:true,
           lowLatencyMode:false,
           capLevelToPlayerSize:true,
           startLevel:-1,
-          /* ABR bandwidth seed: TV > desktop > mobile */
-          abrEwmaDefaultEstimate:isTv?5000000:(mobile()?650000:2800000),
+          /* ABR bandwidth seed */
+          abrEwmaDefaultEstimate:isTv?5000000:2800000,
           abrEwmaSlowFactor:6,abrEwmaFastFactor:3,
-          /* Buffer: TV/desktop generous, mobile lean */
-          maxBufferLength:isTv?60:(mobile()?12:45),
-          maxMaxBufferLength:isTv?120:(mobile()?22:90),
+          /* Buffer: Generous limits to prevent lagging and starvation */
+          maxBufferLength:isTv?90:60,
+          maxMaxBufferLength:isTv?120:90,
           backBufferLength:live?0:(isTv?30:24),
-          /* Live sync — ExoPlayer default is ~3 target durations */
-          liveSyncDurationCount:mobile()?2:(isTv?3:4),
-          liveMaxLatencyDurationCount:mobile()?7:(isTv?9:12),
-          maxLiveSyncPlaybackRate:1.1,
-          /* Retry policy: aggressive like ExoPlayer */
-          manifestLoadingMaxRetry:transcoded?6:(isTv?5:3),
+          /* Live sync: Pulled back from edge to prevent loop seeking */
+          liveSyncDurationCount:isTv?4:5,
+          liveMaxLatencyDurationCount:isTv?10:15,
+          maxLiveSyncPlaybackRate:1,
+          /* Retry policy: relaxed to prevent infinite loops */
+          manifestLoadingMaxRetry:transcoded?6:(isTv?5:4),
           levelLoadingMaxRetry:transcoded?6:(isTv?5:4),
           fragLoadingMaxRetry:transcoded?8:(isTv?7:6),
-          manifestLoadingRetryDelay:400,levelLoadingRetryDelay:500,fragLoadingRetryDelay:500,
-          manifestLoadingTimeOut:transcoded?18000:(isTv?14000:8000),
-          levelLoadingTimeOut:transcoded?20000:(isTv?16000:10000),
-          fragLoadingTimeOut:transcoded?24000:(isTv?18000:14000),
+          manifestLoadingRetryDelay:1000,levelLoadingRetryDelay:1000,fragLoadingRetryDelay:1000,
+          manifestLoadingTimeOut:transcoded?20000:(isTv?14000:10000),
+          levelLoadingTimeOut:transcoded?20000:(isTv?16000:12000),
+          fragLoadingTimeOut:transcoded?24000:(isTv?18000:16000),
           /* Codec/format safety */
           enableSoftwareAES:true,
           progressive:false,
@@ -412,10 +412,10 @@ async function tryPlans(plans,i){
             if(!started){nextPlan();return}
             if(S.hls){
               try{
-                if(d.type===Hls.ErrorTypes.MEDIA_ERROR&&recoveryCount<3){
+                if(d.type===Hls.ErrorTypes.MEDIA_ERROR&&recoveryCount<4){
                   recoveryCount++;S.hls.recoverMediaError();
-                }else if(d.type===Hls.ErrorTypes.NETWORK_ERROR){
-                  S.hls.startLoad(-1);
+                }else if(d.type===Hls.ErrorTypes.NETWORK_ERROR&&recoveryCount<5){
+                  recoveryCount++;S.hls.startLoad(-1);
                 }else{switchIfStuck()}
               }catch{switchIfStuck()}
             }
@@ -432,16 +432,14 @@ async function tryPlans(plans,i){
         {
           enableWorker:!(mobile()||isTv),
           enableStashBuffer:true,
-          stashInitialSize:isTv?2*1024*1024:(mobile()?384*1024:1024*1024),
+          stashInitialSize:isTv?2*1024*1024:1024*1024,
           lazyLoad:false,
           autoCleanupSourceBuffer:true,
           autoCleanupMaxBackwardDuration:tsLive?18:90,
           autoCleanupMinBackwardDuration:tsLive?6:28,
           fixAudioTimestampGap:true,
-          /* Live stream buffer target for TV — more headroom */
-          liveBufferLatencyChasing:tsLive&&!isTv,
-          liveBufferLatencyMaxLatency:isTv?8:4,
-          liveBufferLatencyMinRemain:isTv?3:1.5,
+          /* Disabled latency chasing to prevent skipping/lagging on mobile */
+          liveBufferLatencyChasing:false,
         }
       );
       S.ts.attachMediaElement(v);
