@@ -27,14 +27,18 @@ function rewriteLocation(location, requestUrl) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    
+    // If it's not a transcoder request, load the normal website (index.html, etc)
     if (!url.pathname.startsWith('/transcoder/')) {
       return env.ASSETS.fetch(request);
     }
 
+    // Handle CORS preflight requests
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: withCors(new Headers()) });
     }
 
+    // Route the request to your Render transcoder
     const upstreamPath = url.pathname.replace(/^\/transcoder/, '') || '/';
     const upstreamUrl = new URL(upstreamPath + url.search, TRANSCODER_ORIGIN);
     const headers = new Headers(request.headers);
